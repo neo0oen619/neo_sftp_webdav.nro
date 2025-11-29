@@ -1,137 +1,100 @@
-# ezRemote Client
+## neo_sftp – screaming at WebDAV so you don’t have to
 
-ezRemote Client is a File Manager application that allows you to connect the Switch to remote FTP, SMB, WebDAV servers to transfer  and manage files. The interface is inspired by Filezilla client which provides a commander like GUI.
+This is a fork of **switch-ezremote-client**, rewired into **neo_sftp**: a two‑panel file manager for Nintendo Switch that talks SFTP, FTP, SMB and *especially* WebDAV over `webdavs://` (Tailscale + Funnel + SFTPGo).  
+We took the part that used to crash, stall and cry, and turned it into something that mostly just grumbles and goes faster.
 
-![Preview](/screenshot.jpg)
+Think of it as Cyberduck/FileZilla, but trapped in a tiny plastic console and motivated purely by your disappointment.
 
-## Features
- - Transfer files back and forth between Switch and FTP/SMB/WebDAV/HTTP(Apache,Ngnix,IIS,RClone,NPXServe) server
- - File management function include cut/copy/paste/edit/rename/delete/new folder/file for files on Switch SD Card
- - Extract zip, rar, 7zip, tar, tar.gz and tar.bz2 from Local and Remote Servers
- - Create Zip file in local
- - Simple Text Editor for editing text files
- - Image viewer for jpg, png, bmp
+---
 
-## Installation
- - Copy ezremote-client.nro to the "/switch" folder on sdcard
- - Install [ezremote-client.nsp](https://github.com/cy33hc/switch-ezremote-client/releases/download/1.00/ezremote-client.nsp)
+### What we actually fixed (besides our sanity)
 
-## Known Issues
- - Occasional crash in applet mode. Avoid running in applet mode and install the NSP forwarder.
+- **WebDAV over `webdavs://`**:
+  - Fixed crashes from reusing a single `CURL*` with stale callbacks.
+  - Relaxed TLS checks so Funnel/SFTPGo cert chains stop throwing tantrums.
+  - Fixed path handling so SFTPGo’s `/F:2TB/...` hrefs actually match what the UI shows.
+  - Switched to ranged downloads so long HTTPS streams don’t die mid‑transfer.
+- **Speed hacks (a bit cursed, but effective)**:
+  - Chunked downloads via HTTP `Range` (config: `webdav_chunk_mb`, default 8, clamped 1–16).
+  - Optional **parallel range workers** (config: `webdav_parallel`, default 2, clamped 1–4).
+  - Tuned libcurl (HTTP/2 preferred, bigger buffers, TCP_NODELAY, keep‑alives).
+  - CPU boost + Wi‑Fi priority on Switch so your downloads get VIP treatment while your battery quietly plots revenge.
 
-## Usage
-To distinguish between FTP, SMB, WebDAV, the URL must be prefix with **ftp://**, **smb://**, **webdav://**, **webdavs://**, **http://**, **https://**
+It’s still limited by Switch Wi‑Fi + VPN + reverse proxy + your ISP. We’re fast *for that*, not for physics.
 
- - The url format for FTP is
-   ```
-   ftp://hostname[:port]
+---
 
-     - hostname can be the textual hostname or an IP address. hostname is required
-     - port is optional and defaults to 21(ftp) if not provided
-   ```
+### Building (short version, no ritual sacrifice required)
 
- - The url format for SMB is
-   ```
-   smb://hostname[:port]/sharename
+Prereqs:
+- devkitPro with `devkitA64` and Switch toolchain.
+- Switch libs via `pacman` (names may vary slightly by setup), e.g.:
+  - `switch-libnx`, `switch-curl`, `switch-mbedtls`, `switch-libarchive`,
+    `switch-zlib`, `switch-libjpeg-turbo`, `switch-libpng`, `switch-webp`,
+    `switch-freetype`, `switch-glad`, etc.
 
-     - hostname can be the textual hostname or an IP address. hostname is required
-     - port is optional and defaults to 445 if not provided
-     - sharename is required
-   ```
-
- - The url format for WebDAV is
-   ```
-   webdav://hostname[:port]/[url_path]
-   webdavs://hostname[:port]/[url_path]
-
-     - hostname can be the textual hostname or an IP address. hostname is required
-     - port is optional and defaults to 80(webdav) and 443(webdavs) if not provided
-     - url_path is optional based on your WebDAV hosting requiremets
-   ```
-  
- - The url format for HTTP is
-   ```
-   http://hostname[:port]/[url_path]
-   https://hostname[:port]/[url_path]
-
-     - hostname can be the textual hostname or an IP address. hostname is required
-     - port is optional and defaults to 80(http) and 443(https) if not provided
-     - url_path is optional based on your WebDAV hosting requiremets
-   ```
-
-- For Internet Archive repos download URLs
-  - Only supports parsing of the download URL (ie the URL where you see a list of files). Example
-    |      |           |  |
-    |----------|-----------|---|
-    | ![archive_org_screen1](https://github.com/user-attachments/assets/b129b6cf-b938-4d7c-a3fa-61e1c633c1f6) | ![archive_org_screen2](https://github.com/user-attachments/assets/646106d1-e60b-4b35-b153-3475182df968)| ![image](https://github.com/user-attachments/assets/cad94de8-a694-4ef5-92a8-b87468e30adb) |
-
-- For Myrient repos, entry **https://myrient.erista.me/files** in the server field.
-  ![image](https://github.com/user-attachments/assets/b80e2bec-b8cc-4acc-9ab6-7b0dc4ef20e6)
-
-- Support for browse and download  release artifacts from github repos. Under the server just enter the git repo of the homebrew eg https://github.com/cy33hc/ps4-ezremote-client
-  ![image](https://github.com/user-attachments/assets/f8e931ea-f1d1-4af8-aed5-b0dfe661a230)
-
-Tested with following WebDAV server:
- - **(Recommeded)** [RClone](https://rclone.org/) - For hosting your own WebDAV server. You can use RClone WebDAV server as proxy to 70+ public file hosting services (Eg. Google Drive, OneDrive, Mega, dropbox, NextCloud etc..)
- - [Dufs](https://github.com/sigoden/dufs) - For hosting your own WebDAV server.
- - [SFTPgo](https://github.com/drakkan/sftpgo) - For local hosted WebDAV server. Can also be used as a webdav frontend for Cloud Storage like AWS S3, Azure Blob or Google Storage.
-
-## Controls
-```
-X - Menu (after a file is selected)
-A - Select Button/TextBox
-B - Un-Select the file list to navigate to other widgets
-Y - Mark file(s)/folder(s) for Delete/Rename/Upload/Download
-R1 - Navigate to the Remote list of files
-L1 - Navigate to the Local list of files
-ZL - Go up a directory from current directory
-+ - Exit Application
+Build:
+```bash
+mkdir -p build
+cd build
+/opt/devkitpro/portlibs/switch/bin/aarch64-none-elf-cmake ..
+make -j4
 ```
 
-## Multi Language Support
-The appplication support following languages.
+You’ll get `ezremote-client.nro` in `build/` – rename or ship it as you like  
+(we use `neo_sftp.nro` in our own builds, but the Switch doesn’t judge names, only crashes).
 
-The following languages are auto detected.
-```
-Dutch
-English
-French
-German
-Italiano
-Japanese
-Korean
-Polish
-Portuguese_BR
-Russian
-Spanish
-Simplified Chinese
-Traditional Chinese
-```
+If you just want to run it right now, there’s also a prebuilt `neo_sftp.nro` in `build/neo_sftp.nro`.
 
-The following aren't standard languages supported by the PS4, therefore requires a config file update.
-```
-Arabic
-Catalan
-Croatian
-Euskera
-Galego
-Greek
-Hungarian
-Indonesian
-Romanian
-Ryukyuan
-Thai
-Turkish
-```
-User must modify the file **/switch/ezremote-client/config.ini** and update the **language** setting with the **exact** values from the list above.
+---
 
-**HELP:** There are no language translations for the following languages, therefore not support yet. Please help expand the list by submitting translation for the following languages. If you would like to help, please download this [Template](https://github.com/cy33hc/switch-ezremote-client/blob/master/lang/English.ini), make your changes and submit an issue with the file attached.
-```
-Finnish
-Swedish
-Danish
-Norwegian
-Czech
-Vietnamese
-```
-or any other language that you have a traslation for.
+### Configuration & usage (aka “how not to brick your downloads”)
+
+Config file path on SD (runtime):  
+`/switch/ezremote-client/config.ini`
+
+Key bits:
+- `[Global]`
+  - `last_site=Site 1` – which site to auto‑connect.
+  - `webdav_chunk_mb=8` – WebDAV range chunk size in MiB (1–16).  
+    Bigger = fewer requests, more RAM, more “hold my beer”.
+  - `webdav_parallel=2` – parallel WebDAV workers (1–4).  
+    More = more connections, more speed *until* your network says “nope”.
+- `[Site N]`
+  - `remote_server=` – e.g. `webdavs://unk1server.../dav` or `sftp://host:port`.
+  - `remote_server_user=`, `remote_server_password=` – basic auth creds.
+
+UI basics:
+- Left panel = local SD, right panel = remote.
+- Use d‑pad / sticks to navigate, A to select, X/Y/etc. for actions (similar to the original EZ Remote client).
+- Enable logging via `LOG_DIR` (`/switch/neo_sftp/log.txt`) if you enjoy reading your download history like a slow-motion crime scene.
+
+Pro tip: For raw speed, SFTP is usually faster and calmer than WebDAV over Tailscale/Funnel. WebDAV is here for when paths matter and you like pain.
+
+---
+
+### Contributing / hacking on it
+
+- WebDAV logic lives in `source/clients/webdav.cpp`.
+- HTTP client / curl setup is in `source/httpclient/HTTPClient.{h,cpp}`.
+- Global transfer stats (`bytes_transfered`, `bytes_to_download`) are in `source/windows.cpp`.
+
+If you touch WebDAV:
+- Reset curl options before each request (method, callbacks, uploads).
+- Don’t point curl callbacks at stack memory unless you enjoy random crashes.
+- Treat `webdav_parallel` and `webdav_chunk_mb` as loaded guns: powerful, but pointed squarely at your own performance.
+
+If you add something clever and it doesn’t explode, please update this README so future you knows which demon you already exorcised.
+
+---
+
+### Dark-ish FAQ
+
+**Q: Why is my download still “only” ~1 MB/s?**  
+A: Because Switch Wi‑Fi + VPN + reverse proxy + WebDAV. This app can’t turn your network into fiber any more than a new pair of shoes makes you a car.
+
+**Q: Can we hit 10 MB/s?**  
+A: Maybe in the next life, where the Switch has a 10G NIC and your ISP isn’t throttling you harder than your boss throttles your deadlines.
+
+**Q: Is it safe?**  
+A: As safe as multithreaded C++ on an embedded console can be. So… let’s call it “exciting”. Backups are cheaper than therapy.
