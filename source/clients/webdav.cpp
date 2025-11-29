@@ -1,6 +1,10 @@
 #include <fstream>
 #include <regex>
 #include <algorithm>
+#include <memory>
+#include <mutex>
+#include <switch.h>
+#include <stdio.h>
 #include "common.h"
 #include "clients/remote_client.h"
 #include "clients/webdav.h"
@@ -22,6 +26,7 @@ namespace
         std::string user;
         std::string pass;
         std::string rangeHeader;
+        CHTTPClient *client = nullptr;
         int64_t start = 0;
         int64_t end = 0;
         long httpCode = 0;
@@ -30,60 +35,387 @@ namespace
         bool ok = false;
     };
 
+    struct WebDAVParallelContext
+    {
+        std::string url;
+        std::string outputPath;
+        FILE *file = nullptr;
+        int64_t size = 0;
+        int64_t chunk_size = 0;
+
+        std::mutex stateMutex;
+        std::mutex fileMutex;
+
+        int64_t nextOffset = 0;
+        bool hadError = false;
+        long lastHttpCode = 0;
+        std::string errorMessage;
+    };
+
+    struct WebDAVWorkerArgs
+    {
+        WebDAVParallelContext *ctx = nullptr;
+        CHTTPClient *client = nullptr;
+    };
+
     void WebDAVChunkDownloadThread(void *argp)
     {
         WebDAVChunkTask *task = static_cast<WebDAVChunkTask *>(argp);
         if (!task)
             return;
 
-        CHTTPClient http([](const std::string &){});
-        // Match BaseClient::Connect setup: relaxed TLS verification and
-        // optional basic auth, plus the shared CA file.
-        http.SetBasicAuth(task->user, task->pass);
-        http.InitSession(false, CHTTPClient::SettingsFlag::NO_FLAGS);
-        http.SetCertificateFile(CACERT_FILE);
+        const int kMaxAttempts = 10;
+        const int64_t kRetryDelayNs = 5000000000ll; // 5 seconds
 
-        CHTTPClient::HttpResponse res;
-        CHTTPClient::HeadersMap headers;
-        if (!task->rangeHeader.empty())
-            headers["Range"] = task->rangeHeader;
-
-        if (!http.Get(task->url, headers, res))
+        CHTTPClient *http = task->client;
+        if (!http)
         {
-            task->err = res.errMessage;
+            task->err = "internal error";
+            task->httpCode = 0;
+            task->ok = false;
+            return;
+        }
+
+        for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+        {
+            if (stop_activity)
+            {
+                task->err = lang_strings[STR_CANCEL_ACTION_MSG];
+                task->httpCode = 0;
+                task->ok = false;
+                return;
+            }
+
+            CHTTPClient::HttpResponse res;
+            CHTTPClient::HeadersMap headers;
+            if (!task->rangeHeader.empty())
+                headers["Range"] = task->rangeHeader;
+
+            bool ok = http->Get(task->url, headers, res);
             task->httpCode = res.iCode;
-            task->ok = false;
-            Logger::Logf("WEBDAV GET parallel range error url=%s range=%s err=%s",
-                         task->url.c_str(),
-                         task->rangeHeader.c_str(),
-                         res.errMessage.c_str());
+
+            if (!ok)
+            {
+                task->err = res.errMessage;
+
+                bool retryable = (task->httpCode == 0);
+                Logger::Logf("WEBDAV GET parallel range error url=%s range=%s code=%ld err=%s attempt=%d/%d",
+                             task->url.c_str(),
+                             task->rangeHeader.c_str(),
+                             task->httpCode,
+                             task->err.c_str(),
+                             attempt + 1,
+                             kMaxAttempts);
+
+                if (!retryable || attempt == kMaxAttempts - 1)
+                {
+                    task->ok = false;
+                    return;
+                }
+
+                // Sleep in small slices so user cancel is responsive.
+                const int slices = 50;
+                const int64_t slice = kRetryDelayNs / slices;
+                for (int s = 0; s < slices; ++s)
+                {
+                    if (stop_activity)
+                    {
+                        task->err = lang_strings[STR_CANCEL_ACTION_MSG];
+                        task->httpCode = 0;
+                        task->ok = false;
+                        return;
+                    }
+                    svcSleepThread(slice);
+                }
+                continue;
+            }
+
+            if (res.iCode != 206)
+            {
+                task->err = "unexpected http code";
+                Logger::Logf("WEBDAV GET parallel unexpected code url=%s range=%s code=%ld attempt=%d/%d",
+                             task->url.c_str(),
+                             task->rangeHeader.c_str(),
+                             res.iCode,
+                             attempt + 1,
+                             kMaxAttempts);
+
+                bool retryable = (res.iCode >= 500 && res.iCode < 600);
+                if (!retryable || attempt == kMaxAttempts - 1)
+                {
+                    task->ok = false;
+                    return;
+                }
+
+                const int slices = 50;
+                const int64_t slice = kRetryDelayNs / slices;
+                for (int s = 0; s < slices; ++s)
+                {
+                    if (stop_activity)
+                    {
+                        task->err = lang_strings[STR_CANCEL_ACTION_MSG];
+                        task->httpCode = 0;
+                        task->ok = false;
+                        return;
+                    }
+                    svcSleepThread(slice);
+                }
+                continue;
+            }
+
+            if (res.strBody.empty())
+            {
+                task->err = "empty body";
+                Logger::Logf("WEBDAV GET parallel empty body url=%s range=%s attempt=%d/%d",
+                             task->url.c_str(),
+                             task->rangeHeader.c_str(),
+                             attempt + 1,
+                             kMaxAttempts);
+
+                if (attempt == kMaxAttempts - 1)
+                {
+                    task->ok = false;
+                    return;
+                }
+
+                const int slices = 50;
+                const int64_t slice = kRetryDelayNs / slices;
+                for (int s = 0; s < slices; ++s)
+                {
+                    if (stop_activity)
+                    {
+                        task->err = lang_strings[STR_CANCEL_ACTION_MSG];
+                        task->httpCode = 0;
+                        task->ok = false;
+                        return;
+                    }
+                    svcSleepThread(slice);
+                }
+                continue;
+            }
+
+            task->data.swap(res.strBody);
+            task->ok = true;
             return;
         }
+    }
 
-        task->httpCode = res.iCode;
-        if (res.iCode != 206)
+    void WebDAVParallelWorkerThread(void *argp)
+    {
+        WebDAVWorkerArgs *args = static_cast<WebDAVWorkerArgs *>(argp);
+        if (!args || !args->ctx || !args->client)
+            return;
+
+        WebDAVParallelContext *ctx = args->ctx;
+        CHTTPClient *http = args->client;
+
+        const int kMaxAttempts = 10;
+        const int64_t kRetryDelayNs = 5000000000ll; // 5 seconds
+
+        while (true)
         {
-            task->err = "unexpected http code";
-            Logger::Logf("WEBDAV GET parallel unexpected code url=%s range=%s code=%ld",
-                         task->url.c_str(),
-                         task->rangeHeader.c_str(),
-                         res.iCode);
-            task->ok = false;
-            return;
-        }
+            int64_t start = 0;
+            int64_t end = 0;
 
-        if (res.strBody.empty())
-        {
-            task->err = "empty body";
-            Logger::Logf("WEBDAV GET parallel empty body url=%s range=%s",
-                         task->url.c_str(),
-                         task->rangeHeader.c_str());
-            task->ok = false;
-            return;
-        }
+            {
+                std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                if (ctx->hadError)
+                    return;
+                if (ctx->nextOffset >= ctx->size)
+                    return;
 
-        task->data.swap(res.strBody);
-        task->ok = true;
+                start = ctx->nextOffset;
+                end = start + ctx->chunk_size - 1;
+                if (end >= ctx->size)
+                    end = ctx->size - 1;
+
+                ctx->nextOffset = end + 1;
+            }
+
+            char range_header[64];
+            std::snprintf(range_header, sizeof(range_header), "bytes=%lld-%lld",
+                          static_cast<long long>(start),
+                          static_cast<long long>(end));
+
+            for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+            {
+                if (stop_activity)
+                {
+                    std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                    if (!ctx->hadError)
+                    {
+                        ctx->hadError = true;
+                        ctx->errorMessage = lang_strings[STR_CANCEL_ACTION_MSG];
+                    }
+                    return;
+                }
+
+                CHTTPClient::HttpResponse res;
+                CHTTPClient::HeadersMap headers;
+                headers["Range"] = range_header;
+
+                bool ok = http->Get(ctx->url, headers, res);
+                long httpCode = res.iCode;
+
+                if (!ok)
+                {
+                    std::string err = res.errMessage;
+
+                    bool retryable = (httpCode == 0);
+                    Logger::Logf("WEBDAV GET parallel range error url=%s range=%s code=%ld err=%s attempt=%d/%d",
+                                 ctx->url.c_str(),
+                                 range_header,
+                                 httpCode,
+                                 err.c_str(),
+                                 attempt + 1,
+                                 kMaxAttempts);
+
+                    if (!retryable || attempt == kMaxAttempts - 1)
+                    {
+                        std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                        if (!ctx->hadError)
+                        {
+                            ctx->hadError = true;
+                            ctx->errorMessage = err;
+                        }
+                        return;
+                    }
+
+                    const int slices = 50;
+                    const int64_t slice = kRetryDelayNs / slices;
+                    for (int s = 0; s < slices; ++s)
+                    {
+                        if (stop_activity)
+                        {
+                            std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                            if (!ctx->hadError)
+                            {
+                                ctx->hadError = true;
+                                ctx->errorMessage = lang_strings[STR_CANCEL_ACTION_MSG];
+                            }
+                            return;
+                        }
+                        svcSleepThread(slice);
+                    }
+                    continue;
+                }
+
+                if (res.iCode != 206)
+                {
+                    std::string err = "unexpected http code";
+                    Logger::Logf("WEBDAV GET parallel unexpected code url=%s range=%s code=%ld attempt=%d/%d",
+                                 ctx->url.c_str(),
+                                 range_header,
+                                 res.iCode,
+                                 attempt + 1,
+                                 kMaxAttempts);
+
+                    bool retryable = (res.iCode >= 500 && res.iCode < 600);
+                    if (!retryable || attempt == kMaxAttempts - 1)
+                    {
+                        std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                        if (!ctx->hadError)
+                        {
+                            ctx->hadError = true;
+                            ctx->errorMessage = err;
+                        }
+                        return;
+                    }
+
+                    const int slices = 50;
+                    const int64_t slice = kRetryDelayNs / slices;
+                    for (int s = 0; s < slices; ++s)
+                    {
+                        if (stop_activity)
+                        {
+                            std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                            if (!ctx->hadError)
+                            {
+                                ctx->hadError = true;
+                                ctx->errorMessage = lang_strings[STR_CANCEL_ACTION_MSG];
+                            }
+                            return;
+                        }
+                        svcSleepThread(slice);
+                    }
+                    continue;
+                }
+
+                if (res.strBody.empty())
+                {
+                    std::string err = "empty body";
+                    Logger::Logf("WEBDAV GET parallel empty body url=%s range=%s attempt=%d/%d",
+                                 ctx->url.c_str(),
+                                 range_header,
+                                 attempt + 1,
+                                 kMaxAttempts);
+
+                    if (attempt == kMaxAttempts - 1)
+                    {
+                        std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                        if (!ctx->hadError)
+                        {
+                            ctx->hadError = true;
+                            ctx->errorMessage = err;
+                        }
+                        return;
+                    }
+
+                    const int slices = 50;
+                    const int64_t slice = kRetryDelayNs / slices;
+                    for (int s = 0; s < slices; ++s)
+                    {
+                        if (stop_activity)
+                        {
+                            std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                            if (!ctx->hadError)
+                            {
+                                ctx->hadError = true;
+                                ctx->errorMessage = lang_strings[STR_CANCEL_ACTION_MSG];
+                            }
+                            return;
+                        }
+                        svcSleepThread(slice);
+                    }
+                    continue;
+                }
+
+                {
+                    std::lock_guard<std::mutex> fileLock(ctx->fileMutex);
+                    if (fseeko(ctx->file, (off_t)start, SEEK_SET) != 0)
+                    {
+                        std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                        if (!ctx->hadError)
+                        {
+                            ctx->hadError = true;
+                            ctx->errorMessage = lang_strings[STR_FAIL_DOWNLOAD_MSG];
+                        }
+                        return;
+                    }
+
+                    size_t written = std::fwrite(res.strBody.data(), 1, res.strBody.size(), ctx->file);
+                    if (written != res.strBody.size())
+                    {
+                        Logger::Logf("WEBDAV GET parallel write failed path=%s expected=%zu written=%zu",
+                                     ctx->outputPath.c_str(),
+                                     res.strBody.size(),
+                                     written);
+                        std::lock_guard<std::mutex> lock(ctx->stateMutex);
+                        if (!ctx->hadError)
+                        {
+                            ctx->hadError = true;
+                            ctx->errorMessage = lang_strings[STR_FAIL_DOWNLOAD_MSG];
+                        }
+                        return;
+                    }
+
+                    bytes_transfered += static_cast<int64_t>(written);
+                    ctx->lastHttpCode = res.iCode;
+                }
+
+                break;
+            }
+        }
     }
 }
 
@@ -190,6 +522,13 @@ int WebDAVClient::Get(const std::string &outputfile, const std::string &path, ui
     bytes_transfered = 0;
     prev_tick = Util::GetTick();
 
+    if (stop_activity)
+    {
+        sprintf(this->response, "%s", lang_strings[STR_CANCEL_ACTION_MSG]);
+        Logger::Logf("WEBDAV GET cancelled before start path=%s", path.c_str());
+        return 0;
+    }
+
     // First, try to get the full size via PROPFIND so we can download
     // in smaller HTTP range chunks (more robust with Tailscale/Funnel).
     int64_t size = 0;
@@ -241,6 +580,17 @@ int WebDAVClient::Get(const std::string &outputfile, const std::string &path, ui
         bytes_to_download = static_cast<int64_t>(res_fallback.strBody.size());
         bytes_transfered = bytes_to_download;
 
+        uint64_t now = Util::GetTick();
+        double elapsed_sec = (now - prev_tick) * 1.0 / 1000000.0;
+        double mb = (res_fallback.strBody.size() / 1048576.0);
+        double avg_mbps = (elapsed_sec > 0.0) ? (mb / elapsed_sec) : 0.0;
+
+        Logger::Logf("WEBDAV PERF fallback url=%s bytes=%zu elapsed=%.2fs avg=%.2f MiB/s",
+                     encoded_url_fallback.c_str(),
+                     res_fallback.strBody.size(),
+                     elapsed_sec,
+                     avg_mbps);
+
         Logger::Logf("WEBDAV GET fallback done url=%s code=%ld bytes=%zu",
                      encoded_url_fallback.c_str(), res_fallback.iCode, res_fallback.strBody.size());
         return 1;
@@ -258,15 +608,27 @@ int WebDAVClient::Get(const std::string &outputfile, const std::string &path, ui
     int chunk_mb = webdav_chunk_size_mb;
     if (chunk_mb < 1)
         chunk_mb = 1;
-    else if (chunk_mb > 16)
-        chunk_mb = 16;
-    const int64_t chunk_size = static_cast<int64_t>(chunk_mb) * 1024 * 1024;
+    else if (chunk_mb > 32)
+        chunk_mb = 32;
+    int64_t chunk_size = static_cast<int64_t>(chunk_mb) * 1024 * 1024;
 
     int parallel = webdav_parallel_connections;
     if (parallel < 1)
         parallel = 1;
-    else if (parallel > 4)
-        parallel = 4;
+    else if (parallel > 16)
+        parallel = 16;
+
+    // Keep the total in-flight window (chunk_size * parallel) under a
+    // cap (128 MiB) to avoid excessive memory usage when the user
+    // configures both a large chunk size and many workers.
+    const int64_t max_window = 128LL * 1024 * 1024;
+    if (chunk_size * parallel > max_window)
+    {
+        chunk_size = max_window / parallel;
+        if (chunk_size < (1LL * 1024 * 1024))
+            chunk_size = 1LL * 1024 * 1024;
+        chunk_mb = static_cast<int>(chunk_size / (1024 * 1024));
+    }
 
     Logger::Logf("WEBDAV GET (ranged) url=%s -> output=%s size=%lld chunk_size=%lld parallel=%d",
                  encoded_url.c_str(),
@@ -276,9 +638,9 @@ int WebDAVClient::Get(const std::string &outputfile, const std::string &path, ui
                  parallel);
 
     // Only attempt the more aggressive parallel ranged path when:
-    // - The file is reasonably large (at least a couple of chunks).
+    // - The file is at least larger than a single chunk.
     // - The server clearly supports HTTP Range requests.
-    const bool wants_parallel = (parallel > 1 && size > chunk_size * 2);
+    const bool wants_parallel = (parallel > 1 && size > chunk_size);
     if (wants_parallel && ProbeRangeSupport(encoded_url))
     {
         Logger::Logf("WEBDAV GET using parallel ranged download url=%s", encoded_url.c_str());
@@ -332,6 +694,16 @@ int WebDAVClient::GetRangedSequential(const std::string &outputfile,
 
     while (offset_bytes < size)
     {
+        if (stop_activity)
+        {
+            std::fclose(file);
+            sprintf(this->response, "%s", lang_strings[STR_CANCEL_ACTION_MSG]);
+            Logger::Logf("WEBDAV GET range cancelled url=%s bytes=%lld",
+                         encoded_url.c_str(),
+                         static_cast<long long>(offset_bytes));
+            return 0;
+        }
+
         int64_t end = offset_bytes + chunk_size - 1;
         if (end >= size)
             end = size - 1;
@@ -383,10 +755,6 @@ int WebDAVClient::GetRangedSequential(const std::string &outputfile,
         offset_bytes += static_cast<int64_t>(res.strBody.size());
         bytes_transfered = offset_bytes;
 
-        Logger::Logf("WEBDAV GET range ok url=%s range=%s code=%ld chunk_bytes=%zu total_bytes=%lld",
-                     encoded_url.c_str(), range_header, res.iCode,
-                     res.strBody.size(), static_cast<long long>(offset_bytes));
-
         // If server ignored Range and returned the full file with 200,
         // we are done after the first iteration.
         if (res.iCode == 200)
@@ -403,6 +771,18 @@ int WebDAVClient::GetRangedSequential(const std::string &outputfile,
         Logger::Logf("WEBDAV GET ranged download produced no data url=%s", encoded_url.c_str());
         return 0;
     }
+
+    uint64_t now = Util::GetTick();
+    double elapsed_sec = (now - prev_tick) * 1.0 / 1000000.0;
+    double mb = (offset_bytes / 1048576.0);
+    double avg_mbps = (elapsed_sec > 0.0) ? (mb / elapsed_sec) : 0.0;
+
+    Logger::Logf("WEBDAV PERF ranged-seq url=%s size=%lld chunk_mb=%lld elapsed=%.2fs avg=%.2f MiB/s",
+                 encoded_url.c_str(),
+                 static_cast<long long>(offset_bytes),
+                 static_cast<long long>(chunk_size / (1024 * 1024)),
+                 elapsed_sec,
+                 avg_mbps);
 
     Logger::Logf("WEBDAV GET ranged done url=%s code=%ld bytes=%lld",
                  encoded_url.c_str(), last_code, static_cast<long long>(offset_bytes));
@@ -424,136 +804,85 @@ int WebDAVClient::GetRangedParallel(const std::string &outputfile,
     }
 
     bytes_transfered = 0;
-    long last_code = 0;
 
-    int64_t scheduled_offset = 0;
+    WebDAVParallelContext ctx;
+    ctx.url = encoded_url;
+    ctx.outputPath = outputfile;
+    ctx.file = file;
+    ctx.size = size;
+    ctx.chunk_size = chunk_size;
+    ctx.nextOffset = 0;
+    ctx.hadError = false;
+    ctx.lastHttpCode = 0;
 
-    while (scheduled_offset < size)
+    std::vector<std::unique_ptr<CHTTPClient>> httpClients;
+    httpClients.reserve(parallel);
+    for (int i = 0; i < parallel; ++i)
     {
-        std::vector<WebDAVChunkTask> tasks;
-        std::vector<Thread> threads;
+        auto client = std::make_unique<CHTTPClient>([](const std::string &){});
+        client->SetBasicAuth(http_username, http_password);
+        client->InitSession(false, CHTTPClient::SettingsFlag::NO_FLAGS);
+        client->SetCertificateFile(CACERT_FILE);
+        httpClients.push_back(std::move(client));
+    }
 
-        int current_parallel = 0;
-        while (current_parallel < parallel && scheduled_offset < size)
+    std::vector<Thread> threads(parallel);
+    std::vector<WebDAVWorkerArgs> workerArgs(parallel);
+
+    bool threadError = false;
+    for (int i = 0; i < parallel; ++i)
+    {
+        workerArgs[i].ctx = &ctx;
+        workerArgs[i].client = httpClients[i].get();
+
+        Result rc = threadCreate(&threads[i],
+                                 WebDAVParallelWorkerThread,
+                                 &workerArgs[i],
+                                 nullptr,
+                                 0x10000,
+                                 0x3B,
+                                 -2);
+        if (R_FAILED(rc))
         {
-            int64_t start = scheduled_offset;
-            int64_t end = start + chunk_size - 1;
-            if (end >= size)
-                end = size - 1;
-
-            WebDAVChunkTask task;
-            task.url = encoded_url;
-            task.user = http_username;
-            task.pass = http_password;
-            task.start = start;
-            task.end = end;
-
-            char range_header[64];
-            std::snprintf(range_header, sizeof(range_header), "bytes=%lld-%lld",
-                          static_cast<long long>(start),
-                          static_cast<long long>(end));
-            task.rangeHeader = range_header;
-
-            tasks.push_back(std::move(task));
-
-            scheduled_offset = end + 1;
-            ++current_parallel;
-        }
-
-        threads.resize(tasks.size());
-        bool threadError = false;
-
-        for (size_t i = 0; i < tasks.size(); ++i)
-        {
-            Result rc = threadCreate(&threads[i],
-                                     WebDAVChunkDownloadThread,
-                                     &tasks[i],
-                                     nullptr,
-                                     0x10000,
-                                     0x3B,
-                                     -2);
-            if (R_FAILED(rc))
-            {
-                Logger::Logf("WEBDAV GET parallel failed to create thread url=%s range=%s rc=0x%08x",
-                             encoded_url.c_str(),
-                             tasks[i].rangeHeader.c_str(),
-                             rc);
-                threadError = true;
-                break;
-            }
-
-            threadStart(&threads[i]);
-        }
-
-        for (size_t i = 0; i < threads.size(); ++i)
-        {
-            if (threads[i].handle != 0)
-            {
-                threadWaitForExit(&threads[i]);
-                threadClose(&threads[i]);
-            }
-        }
-
-        if (threadError)
-        {
-            std::fclose(file);
-            sprintf(this->response, "%s", lang_strings[STR_FAIL_DOWNLOAD_MSG]);
-            return 0;
-        }
-
-        for (const auto &task : tasks)
-        {
-            if (!task.ok)
-            {
-                std::fclose(file);
-                if (!task.err.empty())
-                    snprintf(this->response, sizeof(this->response), "%s", task.err.c_str());
-                else
-                    sprintf(this->response, "%s", lang_strings[STR_FAIL_DOWNLOAD_MSG]);
-
-                Logger::Logf("WEBDAV GET parallel chunk failed url=%s range=%s code=%ld err=%s",
-                             encoded_url.c_str(),
-                             task.rangeHeader.c_str(),
-                             task.httpCode,
-                             task.err.c_str());
-                return 0;
-            }
-        }
-
-        std::sort(tasks.begin(), tasks.end(),
-                  [](const WebDAVChunkTask &a, const WebDAVChunkTask &b)
-                  {
-                      return a.start < b.start;
-                  });
-
-        for (auto &task : tasks)
-        {
-            if (task.data.empty())
-                continue;
-
-            size_t written = std::fwrite(task.data.data(), 1, task.data.size(), file);
-            if (written != task.data.size())
-            {
-                sprintf(this->response, "%s", lang_strings[STR_FAIL_DOWNLOAD_MSG]);
-                Logger::Logf("WEBDAV GET parallel write failed path=%s expected=%zu written=%zu",
-                             outputfile.c_str(), task.data.size(), written);
-                std::fclose(file);
-                return 0;
-            }
-
-            bytes_transfered += static_cast<int64_t>(task.data.size());
-            last_code = task.httpCode;
-
-            Logger::Logf("WEBDAV GET parallel chunk ok url=%s range=%s code=%ld chunk_bytes=%zu total_bytes=%lld",
+            Logger::Logf("WEBDAV GET parallel failed to create worker thread url=%s rc=0x%08x",
                          encoded_url.c_str(),
-                         task.rangeHeader.c_str(),
-                         task.httpCode,
-                         task.data.size(),
-                         static_cast<long long>(bytes_transfered));
+                         rc);
+            threadError = true;
+            break;
+        }
+
+        threadStart(&threads[i]);
+    }
+
+    for (int i = 0; i < parallel; ++i)
+    {
+        if (threads[i].handle != 0)
+        {
+            threadWaitForExit(&threads[i]);
+            threadClose(&threads[i]);
         }
     }
 
     std::fclose(file);
+
+    if (threadError)
+    {
+        sprintf(this->response, "%s", lang_strings[STR_FAIL_DOWNLOAD_MSG]);
+        return 0;
+    }
+
+    if (ctx.hadError)
+    {
+        if (!ctx.errorMessage.empty())
+            snprintf(this->response, sizeof(this->response), "%s", ctx.errorMessage.c_str());
+        else
+            sprintf(this->response, "%s", lang_strings[STR_FAIL_DOWNLOAD_MSG]);
+
+        Logger::Logf("WEBDAV GET ranged-parallel error url=%s err=%s",
+                     encoded_url.c_str(),
+                     ctx.errorMessage.c_str());
+        return 0;
+    }
 
     if (bytes_transfered <= 0)
     {
@@ -562,9 +891,22 @@ int WebDAVClient::GetRangedParallel(const std::string &outputfile,
         return 0;
     }
 
+    uint64_t now = Util::GetTick();
+    double elapsed_sec = (now - prev_tick) * 1.0 / 1000000.0;
+    double mb = (bytes_transfered / 1048576.0);
+    double avg_mbps = (elapsed_sec > 0.0) ? (mb / elapsed_sec) : 0.0;
+
+    Logger::Logf("WEBDAV PERF ranged-parallel url=%s size=%lld chunk_mb=%lld parallel=%d elapsed=%.2fs avg=%.2f MiB/s",
+                 encoded_url.c_str(),
+                 static_cast<long long>(bytes_transfered),
+                 static_cast<long long>(chunk_size / (1024 * 1024)),
+                 parallel,
+                 elapsed_sec,
+                 avg_mbps);
+
     Logger::Logf("WEBDAV GET ranged-parallel done url=%s code=%ld bytes=%lld parallel=%d",
                  encoded_url.c_str(),
-                 last_code,
+                 ctx.lastHttpCode,
                  static_cast<long long>(bytes_transfered),
                  parallel);
     return 1;

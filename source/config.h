@@ -8,7 +8,7 @@
 #include <set>
 #include "clients/remote_client.h"
 
-#define APP_ID "ezremote-client"
+#define APP_ID "neo_sftp"
 #define DATA_PATH "/switch/" APP_ID
 #define CONFIG_INI_FILE DATA_PATH "/config.ini"
 #define TMP_EDITOR_FILE DATA_PATH "/tmp_editor.txt"

@@ -540,7 +540,13 @@ namespace Actions
             sprintf(activity_message, "%s %s\n", lang_strings[STR_DOWNLOADING], src);
             int ok = remoteclient->Get(dest, src);
             if (!ok)
-                Logger::Logf("Download failed path=%s resp=%s", src, remoteclient->LastResponse());
+            {
+                const char *resp = remoteclient->LastResponse();
+                if (resp && strcmp(resp, lang_strings[STR_CANCEL_ACTION_MSG]) == 0)
+                    Logger::Logf("Download cancelled path=%s resp=%s", src, resp);
+                else
+                    Logger::Logf("Download failed path=%s resp=%s", src, resp ? resp : "");
+            }
             return ok;
         }
 
@@ -586,7 +592,11 @@ namespace Actions
                     ret = DownloadFile(entries[i].path, new_path);
                     if (ret <= 0)
                     {
-                        snprintf(status_message, 1023, "%s %s", lang_strings[STR_FAIL_DOWNLOAD_MSG], entries[i].path);
+                        const char *resp = remoteclient->LastResponse();
+                        if (resp && strcmp(resp, lang_strings[STR_CANCEL_ACTION_MSG]) == 0)
+                            snprintf(status_message, 1023, "%s", resp);
+                        else
+                            snprintf(status_message, 1023, "%s %s", lang_strings[STR_FAIL_DOWNLOAD_MSG], entries[i].path);
                         free(new_path);
                         return ret;
                     }
@@ -604,7 +614,11 @@ namespace Actions
             if (ret <= 0)
             {
                 free(new_path);
-                snprintf(status_message, 1023, "%s %s", lang_strings[STR_FAIL_DOWNLOAD_MSG], src.path);
+                const char *resp = remoteclient->LastResponse();
+                if (resp && strcmp(resp, lang_strings[STR_CANCEL_ACTION_MSG]) == 0)
+                    snprintf(status_message, 1023, "%s", resp);
+                else
+                    snprintf(status_message, 1023, "%s %s", lang_strings[STR_FAIL_DOWNLOAD_MSG], src.path);
                 return 0;
             }
             free(new_path);

@@ -1,0 +1,24 @@
+{
+  "identifier": "@local:mishapi",
+  "name": "mishapi",
+  "changed": true,
+  "operation": {
+    "fields": [
+      {
+        "key": "llm.prediction.systemPrompt",
+        "value": ""
+      },
+      {
+        "key": "ext.virtualModel.customField.openai.gptOss120b.reasoningEffort",
+        "value": "medium"
+      },
+      {
+        "key": "ext.virtualModel.customField.openai.gptOss20b.reasoningEffort",
+        "value": "high"
+      }
+    ]
+  },
+  "load": {
+    "fields": []
+  }
+}

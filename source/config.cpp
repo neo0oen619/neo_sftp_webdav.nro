@@ -72,19 +72,19 @@ namespace CONFIG
         webdav_chunk_size_mb = ReadInt(CONFIG_GLOBAL, CONFIG_WEBDAV_CHUNK_MB, 8);
         if (webdav_chunk_size_mb < 1)
             webdav_chunk_size_mb = 1;
-        else if (webdav_chunk_size_mb > 16)
-            webdav_chunk_size_mb = 16;
+        else if (webdav_chunk_size_mb > 32)
+            webdav_chunk_size_mb = 32;
         WriteInt(CONFIG_GLOBAL, CONFIG_WEBDAV_CHUNK_MB, webdav_chunk_size_mb);
 
         // Number of parallel WebDAV HTTP range requests to use when the
         // server supports ranges and the file is large enough. This is an
         // advanced, potentially less stable optimization; keep the default
-        // low and clamp to a small range.
-        webdav_parallel_connections = ReadInt(CONFIG_GLOBAL, CONFIG_WEBDAV_PARALLEL, 2);
+        // moderate and clamp to a bounded range.
+        webdav_parallel_connections = ReadInt(CONFIG_GLOBAL, CONFIG_WEBDAV_PARALLEL, 10);
         if (webdav_parallel_connections < 1)
             webdav_parallel_connections = 1;
-        else if (webdav_parallel_connections > 4)
-            webdav_parallel_connections = 4;
+        else if (webdav_parallel_connections > 16)
+            webdav_parallel_connections = 16;
         WriteInt(CONFIG_GLOBAL, CONFIG_WEBDAV_PARALLEL, webdav_parallel_connections);
 
         for (int i = 0; i < sites.size(); i++)

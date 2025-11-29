@@ -106,9 +106,9 @@ void CHTTPClient::applyCommonOptions(const std::string &url)
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 0L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 0L);
     // Tune receive buffering and TCP behavior for better throughput over
-    // high-latency links like Tailscale/Funnel while keeping memory usage
-    // reasonable on Switch.
-    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 524288L); // 512 KiB
+    // high-latency links like Tailscale/Funnel. Use a 1 MiB receive
+    // buffer to reduce syscall overhead at the cost of a bit more RAM.
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 1048576L); // 1 MiB
     curl_easy_setopt(curl, CURLOPT_TCP_NODELAY, 1L);
     // Encourage connection reuse and keep-alives so that multiple range
     // requests can share underlying TLS sessions when possible.
@@ -119,8 +119,9 @@ void CHTTPClient::applyCommonOptions(const std::string &url)
     curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 60L);
     curl_easy_setopt(curl, CURLOPT_PATH_AS_IS, 1L);
     curl_easy_setopt(curl, CURLOPT_HTTP09_ALLOWED, 1L);
-    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_ALL);
-    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_ALL);
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    curl_easy_setopt(curl, CURLOPT_MAXCONNECTS, 64L);
 }
 
 size_t CHTTPClient::writeBodyCallback(char *ptr, size_t size, size_t nmemb, void *userdata)
