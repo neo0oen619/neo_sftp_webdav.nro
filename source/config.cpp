@@ -88,7 +88,7 @@ namespace CONFIG
         // server supports ranges and the file is large enough. This is an
         // advanced optimization; keep the default moderate and clamp to a
         // conservative upper bound.
-        webdav_parallel_connections = ReadInt(CONFIG_GLOBAL, CONFIG_WEBDAV_PARALLEL, 10);
+        webdav_parallel_connections = ReadInt(CONFIG_GLOBAL, CONFIG_WEBDAV_PARALLEL, 12);
         if (webdav_parallel_connections < 1)
             webdav_parallel_connections = 1;
         else if (webdav_parallel_connections > 32)
@@ -98,22 +98,22 @@ namespace CONFIG
         // Maximum number of individual files to download in parallel at the
         // scheduler level. This is a coarse-grained knob that controls how
         // many separate WebDAV transfers can be in flight at once on top of
-        // any per-file range parallelism. Keep this small to avoid
-        // overloading the Switch CPU, SD card, or remote server.
-        download_parallel_files = ReadInt(CONFIG_GLOBAL, CONFIG_DOWNLOAD_PARALLEL_FILES, 1);
+        // any per-file range parallelism. Default to 2 for a good balance
+        // between throughput and CPU/SD pressure.
+        download_parallel_files = ReadInt(CONFIG_GLOBAL, CONFIG_DOWNLOAD_PARALLEL_FILES, 2);
         if (download_parallel_files < 1)
             download_parallel_files = 1;
         else if (download_parallel_files > 3)
             download_parallel_files = 3;
         WriteInt(CONFIG_GLOBAL, CONFIG_DOWNLOAD_PARALLEL_FILES, download_parallel_files);
 
-        // When true, large WebDAV downloads (>4 GiB) are written using the
-        // DBI-style split layout so they are safe on FAT32 and installable
-        // by DBI. When false (default), large files are written as a single
-        // flat file instead (better for Tinfoil on exFAT, but not
-        // FAT32-safe). Users on FAT32 should either set this to 1 or use
-        // force_fat32=1.
-        webdav_split_large = ReadBool(CONFIG_GLOBAL, CONFIG_WEBDAV_SPLIT_LARGE, false);
+        // When true (default), large WebDAV downloads (>4 GiB) are written
+        // using the DBI-style split layout so they are safe on FAT32 and
+        // installable by DBI/Tinfoil via the concatenation file mechanism.
+        // When false, large files are written as a single flat NSP instead
+        // (better for exFAT-only setups). Users on exFAT who prefer full
+        // NSPs can set this to 0.
+        webdav_split_large = ReadBool(CONFIG_GLOBAL, CONFIG_WEBDAV_SPLIT_LARGE, true);
         WriteBool(CONFIG_GLOBAL, CONFIG_WEBDAV_SPLIT_LARGE, webdav_split_large);
 
         // When set, treat the SD card as FAT32 for the purposes of large
@@ -164,7 +164,9 @@ namespace CONFIG
             site_settings.insert(std::make_pair(sites[i], setting));
         }
 
-        sprintf(last_site, "%s", ReadString(CONFIG_GLOBAL, CONFIG_LAST_SITE, sites[0].c_str()));
+        // Default to "Site 3" so a fresh config aligns with the
+        // example configuration block shipped in config.example.ini.
+        sprintf(last_site, "%s", ReadString(CONFIG_GLOBAL, CONFIG_LAST_SITE, sites[2].c_str()));
         WriteString(CONFIG_GLOBAL, CONFIG_LAST_SITE, last_site);
 
         remote_settings = &site_settings[std::string(last_site)];

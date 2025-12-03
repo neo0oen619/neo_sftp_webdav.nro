@@ -144,14 +144,14 @@ Config file path on SD (runtime):
 Key settings:
 
 - `[Global]`
-  - `last_site=Site 1` — which site auto‑connects.
+  - `last_site=Site 3` — which site auto‑connects by default on a fresh config.
   - `webdav_chunk_mb=8` — WebDAV range chunk size in MiB (1–32).  
     Bigger = fewer requests, more RAM, more “hold my beer”.
-  - `webdav_parallel=10` — parallel WebDAV workers per file (1–32, effectively clamped by a 256 MiB in‑flight window).  
+  - `webdav_parallel=12` — parallel WebDAV workers per file (1–32, effectively clamped by a 256 MiB in‑flight window).  
     More = more connections, more speed *until* your server/tunnel says “nope”.
-  - `download_parallel_files=1` — how many WebDAV files to download at once (1–3).  
+  - `download_parallel_files=2` — how many WebDAV files to download at once (1–3).  
     Each file still uses its own `webdav_parallel` workers, so total connections ≈ `download_parallel_files * webdav_parallel`.
-  - `webdav_split_large=0` — `0` = full NSPs (best for exFAT + Tinfoil), `1` = split big files into `<name>.nsp/00, 01, …` (best for FAT32).
+  - `webdav_split_large=1` — `1` = split big files into `<name>.nsp/00, 01, …` (safe on FAT32 and works with DBI/Tinfoil); set to `0` on pure exFAT setups if you prefer single full NSPs.
   - `force_fat32=0` — when set to `1`, always treat SD as FAT32 for large downloads and force split layout even for smaller files.
   - `logging_enabled=1` — toggle log spam in `/switch/neo_sftp/log.txt`.
 
@@ -199,4 +199,3 @@ A: As safe as multithreaded C++ on an embedded console can be. So… let’s cal
 
 **Q: It crashed, what do I do?**  
 A: Check the logs, tweak `webdav_parallel` & `webdav_chunk_mb`, try again. If it still blows up, open an issue with what you did and which demon summoned the segfault. Bonus points for memes.
-

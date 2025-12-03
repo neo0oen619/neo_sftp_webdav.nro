@@ -41,7 +41,7 @@
 - This makes large, split WebDAV downloads installable on FAT32 SD cards by tools like DBI and Tinfoil, matching DBI’s own “archived folder” behaviour for >4 GiB files.
 - Fixed WebDAV `href` decoding to stop converting `+` into spaces in path segments, so filenames like `[B+U393216+16DLC].nsp` resolve correctly.
 - Tweaked WebDAV auto-retry semantics so failed downloads are retried up to 6 times with a ~20s total backoff before showing a confirm prompt, keeping long queues moving through transient network issues.
-- Changed `[Global] webdav_split_large` to default to `0` (full NSP) for exFAT setups while still supporting explicit split mode (`webdav_split_large=1` / `force_fat32=1`) for FAT32 cards.
+- Changed `[Global] webdav_split_large` to default to `1` (DBI-style split layout) so large NSPs are safe on FAT32 and still installable by DBI/Tinfoil; exFAT users who prefer a single full NSP can set this back to `0`.
 - Updated documentation:
   - `README.md` documents `download_parallel_files` alongside `webdav_chunk_mb` and `webdav_parallel`.
   - `webdav_downloads.md` and `wanttodo.md` have been refreshed to describe the implemented WebDAV pipeline and to focus TODOs on cross-protocol support and UI polish.
