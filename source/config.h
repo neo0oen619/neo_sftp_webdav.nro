@@ -24,6 +24,7 @@
 #define CONFIG_MAX_EDIT_FILE_SIZE "max_edit_file_size"
 #define CONFIG_WEBDAV_CHUNK_MB "webdav_chunk_mb"
 #define CONFIG_WEBDAV_PARALLEL "webdav_parallel"
+#define CONFIG_FORCE_FAT32 "force_fat32"
 
 #define CONFIG_REMOTE_SERVER "remote_server"
 #define CONFIG_REMOTE_SERVER_USER "remote_server_user"
@@ -75,6 +76,7 @@ extern RemoteClient *remoteclient;
 extern int max_edit_file_size;
 extern int webdav_chunk_size_mb;
 extern int webdav_parallel_connections;
+extern bool force_fat32;
 
 namespace CONFIG
 {

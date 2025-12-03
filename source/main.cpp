@@ -72,6 +72,9 @@ namespace Services
     // Boost CPU and optimize wireless for better transfer performance.
     appletSetCpuBoostMode(ApmCpuBoostMode_FastLoad);
     appletSetWirelessPriorityMode(AppletWirelessPriorityMode_OptimizedForWlan);
+    // Keep the console awake while this app is running so long downloads
+    // are not interrupted by auto-sleep.
+    appletSetAutoSleepDisabled(true);
 
     plInitialize(PlServiceType_User);
     romfsInit();

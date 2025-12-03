@@ -54,8 +54,13 @@ int BaseClient::Connect(const std::string &url, const std::string &username, con
     client->SetCertificateFile(CACERT_FILE);
 
     if (Ping())
+    {
         this->connected = true;
-    return 1;
+        return 1;
+    }
+
+    this->connected = false;
+    return 0;
 }
 
 int BaseClient::Mkdir(const std::string &path)
@@ -263,11 +268,24 @@ bool BaseClient::Ping()
     std::string encoded_url = this->host_url + CHTTPClient::EncodeUrl(GetFullPath("/"));
     if (client->Head(encoded_url, headers, res))
     {
-        return true;
+        if (HTTP_SUCCESS(res.iCode))
+        {
+            return true;
+        }
+
+        if (res.iCode == 401 || res.iCode == 403)
+        {
+            snprintf(this->response, sizeof(this->response), "%s", lang_strings[STR_FAIL_LOGIN_MSG]);
+        }
+        else
+        {
+            snprintf(this->response, sizeof(this->response), "%ld - %s", res.iCode, lang_strings[STR_FAIL_TIMEOUT_MSG]);
+        }
+        return false;
     }
     else
     {
-        sprintf(this->response, "%s", res.errMessage.c_str());
+        snprintf(this->response, sizeof(this->response), "%s", res.errMessage.c_str());
     }
     return false;
 }

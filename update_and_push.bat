@@ -57,18 +57,11 @@ echo.
 echo Staging all changes in this folder...
 git add -A
 
-REM Check if anything is staged
-git diff --cached --quiet
-if %errorlevel%==0 (
-    echo.
-    echo No changes to commit.
-    pause
-    exit /b 0
-)
-
 echo.
 echo Committing with message: "%COMMIT_MSG%"
-git commit -m "%COMMIT_MSG%"
+REM Use --allow-empty so a commit is created even if there are no file diffs,
+REM which ensures a full snapshot is pushed every time this script runs.
+git commit -m "%COMMIT_MSG%" --allow-empty
 if errorlevel 1 (
     echo.
     echo [ERROR] git commit failed.
@@ -78,10 +71,10 @@ if errorlevel 1 (
 
 echo.
 echo Pushing to your GitHub repo using the username and token you entered...
-echo Repo: https://github.com/neo0oen619/neo_sftp.nro.git
-git push "https://%GH_USER%:%GH_TOKEN%@github.com/neo0oen619/neo_sftp.nro.git" %BRANCH%
+echo Repo: https://github.com/neo0oen619/neo_sftp_webdav.nro.git
+git push "https://%GH_USER%:%GH_TOKEN%@github.com/neo0oen619/neo_sftp_webdav.nro.git" %BRANCH%
 REM If you REALLY want to always overwrite remote history, change the line above to:
-REM git push "https://%GH_USER%:%GH_TOKEN%@github.com/neo0oen619/neo_sftp.nro.git" %BRANCH% --force
+REM git push "https://%GH_USER%:%GH_TOKEN%@github.com/neo0oen619/neo_sftp_webdav.nro.git" %BRANCH% --force
 
 if errorlevel 1 (
     echo.

@@ -536,18 +536,55 @@ namespace Actions
 
         if (confirm_state == CONFIRM_YES)
         {
-            prev_tick = Util::GetTick();
-            sprintf(activity_message, "%s %s\n", lang_strings[STR_DOWNLOADING], src);
-            int ok = remoteclient->Get(dest, src);
-            if (!ok)
+            while (true)
             {
+                prev_tick = Util::GetTick();
+                sprintf(activity_message, "%s %s\n", lang_strings[STR_DOWNLOADING], src);
+                int ok = remoteclient->Get(dest, src);
+                if (ok)
+                    return 1;
+
                 const char *resp = remoteclient->LastResponse();
                 if (resp && strcmp(resp, lang_strings[STR_CANCEL_ACTION_MSG]) == 0)
+                {
                     Logger::Logf("Download cancelled path=%s resp=%s", src, resp);
-                else
-                    Logger::Logf("Download failed path=%s resp=%s", src, resp ? resp : "");
+                    return 0;
+                }
+
+                Logger::Logf("Download failed path=%s resp=%s", src, resp ? resp : "");
+
+                // For non-WebDAV clients, keep legacy behaviour and fail immediately.
+                if (remoteclient->clientType() != CLIENT_TYPE_WEBDAV)
+                    return 0;
+
+                // For WebDAV, give the user a chance to resume instead of
+                // auto-failing after internal retries (handled inside the
+                // WebDAV client with backoff). Ask whether to retry or abort.
+                snprintf(confirm_message, 1023, "%s %s\n%s",
+                         lang_strings[STR_FAIL_DOWNLOAD_MSG],
+                         src,
+                         resp ? resp : "");
+                confirm_state = CONFIRM_WAIT;
+                action_to_take = selected_action;
+                activity_inprogess = false;
+                while (confirm_state == CONFIRM_WAIT)
+                {
+                    svcSleepThread(100000000ull);
+                }
+                activity_inprogess = true;
+                selected_action = action_to_take;
+
+                if (confirm_state != CONFIRM_YES)
+                {
+                    // User chose not to resume; leave partial data on disk so
+                    // a future attempt can resume using WebDAV's range logic.
+                    return 0;
+                }
+
+                // Loop back and attempt to resume the download using the same
+                // dest/src; WebDAVClient::Get will detect existing partial
+                // data and only request the missing ranges.
             }
-            return ok;
         }
 
         return 1;
@@ -596,7 +633,25 @@ namespace Actions
                         if (resp && strcmp(resp, lang_strings[STR_CANCEL_ACTION_MSG]) == 0)
                             snprintf(status_message, 1023, "%s", resp);
                         else
-                            snprintf(status_message, 1023, "%s %s", lang_strings[STR_FAIL_DOWNLOAD_MSG], entries[i].path);
+                        {
+                            double mb = bytes_transfered / 1048576.0;
+                            if (bytes_to_download > 0)
+                            {
+                                double total_mb = bytes_to_download / 1048576.0;
+                                snprintf(status_message, 1023, "%s %s (downloaded %.2f/%.2f MiB)",
+                                         lang_strings[STR_FAIL_DOWNLOAD_MSG],
+                                         entries[i].path,
+                                         mb,
+                                         total_mb);
+                            }
+                            else
+                            {
+                                snprintf(status_message, 1023, "%s %s (downloaded %.2f MiB)",
+                                         lang_strings[STR_FAIL_DOWNLOAD_MSG],
+                                         entries[i].path,
+                                         mb);
+                            }
+                        }
                         free(new_path);
                         return ret;
                     }
@@ -618,7 +673,25 @@ namespace Actions
                 if (resp && strcmp(resp, lang_strings[STR_CANCEL_ACTION_MSG]) == 0)
                     snprintf(status_message, 1023, "%s", resp);
                 else
-                    snprintf(status_message, 1023, "%s %s", lang_strings[STR_FAIL_DOWNLOAD_MSG], src.path);
+                {
+                    double mb = bytes_transfered / 1048576.0;
+                    if (bytes_to_download > 0)
+                    {
+                        double total_mb = bytes_to_download / 1048576.0;
+                        snprintf(status_message, 1023, "%s %s (downloaded %.2f/%.2f MiB)",
+                                 lang_strings[STR_FAIL_DOWNLOAD_MSG],
+                                 src.path,
+                                 mb,
+                                 total_mb);
+                    }
+                    else
+                    {
+                        snprintf(status_message, 1023, "%s %s (downloaded %.2f MiB)",
+                                 lang_strings[STR_FAIL_DOWNLOAD_MSG],
+                                 src.path,
+                                 mb);
+                    }
+                }
                 return 0;
             }
             free(new_path);

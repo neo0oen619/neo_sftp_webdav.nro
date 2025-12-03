@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16.3)
 # or use: /opt/devkitpro/portlibs/switch/bin/aarch64-none-elf-cmake
 include(/opt/devkitpro/cmake/Switch.cmake)
 project(ezremote-client VERSION 6.1.9 LANGUAGES C CXX)
-set(TITLE_NAME "neo_sftp")
+set(TITLE_NAME "neo_sftp_webdav")
 set(PROJECT_AUTHOR "neo0oen619")
 
 if(NOT CMAKE_BUILD_TYPE)

@@ -32,6 +32,23 @@ private:
                             const std::string &encodedUrl,
                             int64_t size,
                             int64_t chunk_size);
+    int GetRangedSequential(const std::string &outputfile,
+                            const std::string &encodedUrl,
+                            int64_t size,
+                            int64_t chunk_size,
+                            int64_t start_offset);
+    int GetRangedSequentialSplit(const std::string &outputfile,
+                                 const std::string &encodedUrl,
+                                 int64_t size,
+                                 int64_t chunk_size,
+                                 int64_t start_offset,
+                                 uint64_t partSize);
+    int GetRangedParallelSplit(const std::string &outputfile,
+                               const std::string &encodedUrl,
+                               int64_t size,
+                               int64_t chunk_size,
+                               int parallel,
+                               uint64_t partSize);
     int GetRangedParallel(const std::string &outputfile,
                           const std::string &encodedUrl,
                           int64_t size,

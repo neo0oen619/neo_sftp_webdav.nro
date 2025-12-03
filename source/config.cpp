@@ -21,6 +21,7 @@ char language[128];
 int max_edit_file_size;
 int webdav_chunk_size_mb;
 int webdav_parallel_connections;
+bool force_fat32;
 std::vector<std::string> sites;
 std::map<std::string, RemoteSettings> site_settings;
 std::set<std::string> text_file_extensions;
@@ -78,14 +79,20 @@ namespace CONFIG
 
         // Number of parallel WebDAV HTTP range requests to use when the
         // server supports ranges and the file is large enough. This is an
-        // advanced, potentially less stable optimization; keep the default
-        // moderate and clamp to a bounded range.
+        // advanced optimization; keep the default moderate and clamp to a
+        // conservative upper bound.
         webdav_parallel_connections = ReadInt(CONFIG_GLOBAL, CONFIG_WEBDAV_PARALLEL, 10);
         if (webdav_parallel_connections < 1)
             webdav_parallel_connections = 1;
-        else if (webdav_parallel_connections > 16)
-            webdav_parallel_connections = 16;
+        else if (webdav_parallel_connections > 32)
+            webdav_parallel_connections = 32;
         WriteInt(CONFIG_GLOBAL, CONFIG_WEBDAV_PARALLEL, webdav_parallel_connections);
+
+        // When set, treat the SD card as FAT32 for the purposes of large
+        // downloads and automatically switch to a split-file layout for
+        // files larger than 4 GiB so they can be stored safely.
+        force_fat32 = ReadInt(CONFIG_GLOBAL, CONFIG_FORCE_FAT32, 0) != 0;
+        WriteInt(CONFIG_GLOBAL, CONFIG_FORCE_FAT32, force_fat32 ? 1 : 0);
 
         for (int i = 0; i < sites.size(); i++)
         {

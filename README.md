@@ -12,13 +12,24 @@ Think of it as Cyberduck/FileZilla, but trapped in a tiny plastic console and mo
 - **WebDAV over `webdavs://`**:
   - Fixed crashes from reusing a single `CURL*` with stale callbacks.
   - Relaxed TLS checks so Funnel/SFTPGo cert chains stop throwing tantrums.
-  - Fixed path handling so SFTPGo’s `/F:2TB/...` hrefs actually match what the UI shows.
+  - Fixed path handling so SFTPGo’s `/F:2TB/...` and `/games/...` hrefs actually match what the UI shows.
   - Switched to ranged downloads so long HTTPS streams don’t die mid‑transfer.
+- **Large files & DBI‑style splits**:
+  - Files larger than 4 GiB are stored in DBI‑style split folders (`<name>.nsp/00`, `01`, …) so they work on FAT32 cards and can be installed directly by DBI.
+  - Split folder names are sanitized (no weird Unicode or invalid SD characters) and fall back to `/switch/neo_sftp/downloads` if your chosen local directory isn’t writable.
+  - Split downloads support resume: if you re‑start a download, only missing ranges are fetched.
+  - **Note:** DBI understands this layout; some Tinfoil versions see the folder but treat the first part as `00000000` and fail to install. In that case, either use DBI or join the parts into a single NSP on PC for Tinfoil.
 - **Speed hacks (a bit cursed, but effective)**:
-  - Chunked downloads via HTTP `Range` (config: `webdav_chunk_mb`, default 8, clamped 1–16).
-  - Optional **parallel range workers** (config: `webdav_parallel`, default 2, clamped 1–4).
+  - Chunked downloads via HTTP `Range` (config: `webdav_chunk_mb`, default 8, clamped 1–32).
+  - Optional **parallel range workers per file** (config: `webdav_parallel`, default 10, clamped by code and in‑flight window).
+  - Parallel mode works for both single‑file downloads and split downloads, with a 256 MiB cap on the total in‑flight window (`chunk * parallel`) to avoid out‑of‑memory fun.
   - Tuned libcurl (HTTP/2 preferred, bigger buffers, TCP_NODELAY, keep‑alives).
   - CPU boost + Wi‑Fi priority on Switch so your downloads get VIP treatment while your battery quietly plots revenge.
+  - Auto‑sleep is disabled while the app runs so long transfers don’t get killed by the system sleep timer.
+- **Safer failures & resume**:
+  - WebDAV range workers retry transient errors (disconnects, DNS issues) a few times per chunk.
+  - When a WebDAV download still fails, you get a **Confirm** popup showing the real error and can choose to retry/resume instead of the app silently giving up.
+  - The UI shows how many MiB were actually downloaded for a failed file (`downloaded X/Y MiB` when size is known), and partial data is left on SD so a later retry can resume.
 
 It’s still limited by Switch Wi‑Fi + VPN + reverse proxy + your ISP. We’re fast *for that*, not for physics.
 
@@ -41,8 +52,7 @@ cd build
 make -j4
 ```
 
-You’ll get `ezremote-client.nro` in `build/` – rename or ship it as you like  
-(we use `neo_sftp.nro` in our own builds, but the Switch doesn’t judge names, only crashes).
+You’ll get `neo_sftp.nro` in `build/` – this is the canonical output used by tooling and docs.
 
 If you just want to run it right now, there’s also a prebuilt `neo_sftp.nro` in `build/neo_sftp.nro`.
 
@@ -51,15 +61,16 @@ If you just want to run it right now, there’s also a prebuilt `neo_sftp.nro` i
 ### Configuration & usage (aka “how not to brick your downloads”)
 
 Config file path on SD (runtime):  
-`/switch/ezremote-client/config.ini`
+`/switch/neo_sftp/config.ini`
 
 Key bits:
 - `[Global]`
   - `last_site=Site 1` – which site to auto‑connect.
-  - `webdav_chunk_mb=8` – WebDAV range chunk size in MiB (1–16).  
+  - `webdav_chunk_mb=8` – WebDAV range chunk size in MiB (1–32).  
     Bigger = fewer requests, more RAM, more “hold my beer”.
-  - `webdav_parallel=2` – parallel WebDAV workers (1–4).  
-    More = more connections, more speed *until* your network says “nope”.
+  - `webdav_parallel=10` – parallel WebDAV workers per file (1–32, effectively clamped by a 256 MiB in‑flight window).  
+    More = more connections, more speed *until* your server/tunnel says “nope”.
+  - `force_fat32=0` – when set to 1, always use split layout (even ≤4 GiB); large files split regardless so they work on FAT32.
 - `[Site N]`
   - `remote_server=` – e.g. `webdavs://unk1server.../dav` or `sftp://host:port`.
   - `remote_server_user=`, `remote_server_password=` – basic auth creds.

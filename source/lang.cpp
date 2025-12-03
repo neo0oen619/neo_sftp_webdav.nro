@@ -11,7 +11,7 @@ char lang_identifiers[LANG_STRINGS_NUM][LANG_ID_SIZE] = {
 
 // This is properly populated so that emulator won't crash if an user launches it without language INI files.
 char lang_strings[LANG_STRINGS_NUM][LANG_STR_SIZE] = {
-	"Connection Settings",																	// STR_CONNECTION_SETTINGS
+	"neo_sftp_webdav settings",																// STR_CONNECTION_SETTINGS
 	"Site",																					// STR_SITE
 	"Local",																				// STR_LOCAL
 	"Remote",																				// STR_REMOTE

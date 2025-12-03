@@ -18,7 +18,7 @@ namespace FS
         return path[strlen(path) - 1] == '/';
     }
 
-    void MkDirs(const std::string &ppath, bool prev = false)
+    void MkDirs(const std::string &ppath, bool prev)
     {
         std::string path = ppath;
         if (!prev)
@@ -34,7 +34,7 @@ namespace FS
 
             char last = *ptr;
             *ptr = 0;
-            int err = mkdir(path.c_str(), 0777);
+            mkdir(path.c_str(), 0777);
             *ptr = last;
             ++ptr;
         }
