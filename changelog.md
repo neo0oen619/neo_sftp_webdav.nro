@@ -3,7 +3,7 @@
 ## 2025-12-03 – WebDAV large-file & speed work
 
 - Added ranged WebDAV downloads with DBI-style split layout for files larger than 4 GiB so they can be stored safely on FAT32 and installed directly by DBI.
-- Implemented automatic split folder name sanitisation and a fallback path under `/switch/neo_sftp/downloads` to avoid SD filesystem issues with long/Unicode-heavy filenames or unwritable roots (e.g. `/Download`).
+- Implemented automatic split folder name sanitisation and a fallback path under `/Download` on the SD card to avoid filesystem issues with long/Unicode-heavy filenames or unwritable roots.
 - Introduced parallel ranged downloads for WebDAV:
   - Parallel workers per file are controlled by `[Global] webdav_parallel`.
   - Both split and non-split downloads use parallel HTTP `Range` requests, with a 256 MiB cap on the total in-flight window (`webdav_chunk_mb * webdav_parallel`).

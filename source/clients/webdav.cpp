@@ -109,26 +109,36 @@ namespace
 
     static bool EnsureParentDirectory(const std::string &filePath)
     {
+        // Create the parent directory tree for the exact path the user
+        // selected in the UI. If that fails (e.g. odd mount point or a
+        // non-writable root), fall back to a simple `/Download` folder on
+        // the SD card.
         size_t pos = filePath.find_last_of('/');
-        if (pos == std::string::npos || pos == 0)
+        std::string parent;
+        if (pos == std::string::npos)
         {
-            // If there is no slash or it's just the root ("/file"), fall back
-            // to a known-writable base under the app data directory.
-            std::string parent = std::string(DATA_PATH) + "/downloads";
-            return EnsureDirectoryTree(parent);
+            parent = "/";
+        }
+        else if (pos == 0)
+        {
+            parent = "/";
+        }
+        else
+        {
+            parent = filePath.substr(0, pos);
         }
 
-        std::string parent = filePath.substr(0, pos);
-        // If creating the requested parent directory fails, fall back to a
-        // safe downloads directory under the app data path so that large
-        // transfers can still succeed even when the chosen local directory
-        // is not writable (e.g. a custom root like "/Download").
         if (EnsureDirectoryTree(parent))
             return true;
 
-        Logger::Logf("WEBDAV MKDIR parent failed for path=%s, falling back to DATA_PATH/downloads", filePath.c_str());
-        std::string fallback = std::string(DATA_PATH) + "/downloads";
-        return EnsureDirectoryTree(fallback);
+        Logger::Logf("WEBDAV MKDIR parent failed for path=%s, falling back to /Download", parent.c_str());
+        std::string fallback = "/Download";
+        if (!EnsureDirectoryTree(fallback))
+        {
+            Logger::Logf("WEBDAV MKDIR fallback '/Download' also failed");
+            return false;
+        }
+        return true;
     }
 
     struct WebDAVChunkTask
@@ -1128,14 +1138,21 @@ int WebDAVClient::Get(const std::string &outputfile, const std::string &path, ui
 
         std::string safeName = SanitizePathComponent(fileName);
 
-        // Ensure parent directory exists; if that fails, fall back to a
-        // known-writable downloads directory under the app data path.
-        if (parentDir.empty() || !EnsureDirectoryTree(parentDir))
+        if (parentDir.empty())
+            parentDir = "/";
+
+        // Ensure the user-selected parent directory exists; if it cannot be
+        // created, fall back to `/Download` on the SD card.
+        if (!EnsureDirectoryTree(parentDir))
         {
-            Logger::Logf("WEBDAV GET split parent '%s' not usable, falling back to DATA_PATH/downloads",
+            Logger::Logf("WEBDAV GET split parent '%s' not usable, falling back to /Download",
                          parentDir.c_str());
-            parentDir = std::string(DATA_PATH) + "/downloads";
-            EnsureDirectoryTree(parentDir);
+            parentDir = "/Download";
+            if (!EnsureDirectoryTree(parentDir))
+            {
+                Logger::Logf("WEBDAV GET split fallback '/Download' not usable");
+                return 0;
+            }
         }
 
         std::string splitBase = parentDir;
@@ -1202,10 +1219,10 @@ int WebDAVClient::Get(const std::string &outputfile, const std::string &path, ui
     }
 
     // For non-split single-file downloads, derive a safe local file path by
-    // sanitizing the filename and ensuring the parent directory exists. This
-    // avoids fopen() failures when the remote filename contains characters
-    // that the SD filesystem doesn't like or when the chosen parent path is
-    // not writable (we fall back to DATA_PATH/downloads in that case).
+    // sanitizing the filename and ensuring the parent directory exists.
+    // This avoids fopen() failures when the remote filename contains
+    // characters that the SD filesystem doesn't like or when the chosen
+    // parent path is missing.
     const char *slash = strrchr(outputfile.c_str(), '/');
     std::string singleParentDir;
     std::string singleFileName;
@@ -1221,12 +1238,19 @@ int WebDAVClient::Get(const std::string &outputfile, const std::string &path, ui
     }
 
     std::string safeSingleName = SanitizePathComponent(singleFileName);
-    if (singleParentDir.empty() || !EnsureDirectoryTree(singleParentDir))
+    if (singleParentDir.empty())
+        singleParentDir = "/";
+
+    if (!EnsureDirectoryTree(singleParentDir))
     {
-        Logger::Logf("WEBDAV GET single parent '%s' not usable, falling back to DATA_PATH/downloads",
+        Logger::Logf("WEBDAV GET single parent '%s' not usable, falling back to /Download",
                      singleParentDir.c_str());
-        singleParentDir = std::string(DATA_PATH) + "/downloads";
-        EnsureDirectoryTree(singleParentDir);
+        singleParentDir = "/Download";
+        if (!EnsureDirectoryTree(singleParentDir))
+        {
+            Logger::Logf("WEBDAV GET single fallback '/Download' not usable");
+            return 0;
+        }
     }
 
     std::string singleOutput = singleParentDir;

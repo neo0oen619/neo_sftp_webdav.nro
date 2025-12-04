@@ -19,16 +19,16 @@ This file is for future agents working on the WebDAV / HTTP download path. It ex
 2. Decides chunk size from INI:
    - `[Global] webdav_chunk_mb` (clamped 1–32 MiB, default 8).
 3. Decides whether to use **split** mode:
-   - `need_split = (size > 0xFFFFFFFFLL) || force_fat32;`
+   - `need_split = force_fat32 || (webdav_split_large && size > 0xFFFFFFFFLL);`
    - `force_fat32` is `[Global] force_fat32` (0/1).
 4. If `need_split`:
    - Computes a **sanitized split base**:
-     - Takes the user’s output path (e.g. `/Download/<file>.nsp`).
+     - Takes the user’s output path (e.g. `/games/...` or `/Download/<file>.nsp`).
      - Splits into `parentDir` and `fileName` by the final `/`.
      - Calls `SanitizePathComponent(fileName)` to strip/replace any characters that might upset the SD filesystem (non‑ASCII punctuation, fancy quotes, etc.) and to cap length.
        - Keeps alnum, space, `- _ [ ] ( ) +`, everything else becomes `_`.
        - Preserves the extension (e.g. `.nsp`).
-     - Ensures `parentDir` exists; if not, falls back to `DATA_PATH "/downloads"` (currently `/switch/neo_sftp/downloads`).
+     - Ensures `parentDir` exists; if not, falls back to `/Download` on the SD card.
      - Final split base path is: `parentDir + "/" + safeName`.
    - Computes existing split size via `GetSplitLocalSize(splitBase, partSize)` to support resume.
    - Chooses between **sequential** and **parallel** split download:
